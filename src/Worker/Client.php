@@ -58,15 +58,18 @@ namespace Worker
         protected $errno      = "";
         protected $recvBuffer = "";
         protected $currentPackageLength = 0; // 当前包长度
+        protected $isPersistent = false;
+
         
         /**
          * __construct('json', Client::SOCKET_SYNC);
          * 
          * @param int $scheme 表示当前scheme需要用TCP通讯方式还是UDP通讯方式
          * @param int $isSync 阻塞/非阻塞
+         * @param $isPersistent  长链/短链, 表示下次过来这个链接会不会复用
          * @return void
          */
-        public function __construct($scheme, $isSync = self::SOCKET_SYNC)
+        public function __construct($scheme, $isSync = self::SOCKET_SYNC, $isPersistent = false)
         {
             /*{{{*/
             if (empty($this->event)) {
@@ -83,6 +86,7 @@ namespace Worker
             }
 
             $this->isSync = $isSync;
+            $this->isPersistent = $isPersistent;
             /*}}}*/
         }
 
@@ -108,7 +112,7 @@ namespace Worker
             if ($this->transport === "tcp") {
                 $flag = empty($flag) ? $this->isSync : $flag;
                 if ($flag === self::SOCKET_SYNC) {
-                    $flag = STREAM_CLIENT_CONNECT;
+                    $flag = $this->isPersistent ? STREAM_CLIENT_CONNECT|STREAM_CLIENT_PERSISTENT : STREAM_CLIENT_CONNECT;
                 } else {
                     $flag = STREAM_CLIENT_ASYNC_CONNECT;
                 }
