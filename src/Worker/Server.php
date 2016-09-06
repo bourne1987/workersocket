@@ -177,6 +177,10 @@ namespace Worker
                                 self::$_status = self::STATUS_RUNNING;
                             }
                         }
+                    } else {
+                        if (!self::getAllWorkerPids() && !self::getAllTaskPids()) {
+                            self::exitAndCleanAll();
+                        }
                     }
 
                 } else {
@@ -315,7 +319,7 @@ namespace Worker
             Timer::add(0.1, function($timer_id) {
                 // 当前进程用于监听消息队列的数据，它也只做这个事情，所以就算做阻塞也没事，lievent不会做其他事情的
                 // 获取所有队列中所有类型的数据
-                $message = $this->messageQueue->receiveMsg(0); // 如果没有就阻塞
+                $message = $this->messageQueue->receiveMsg(0, MSG_IPC_NOWAIT); // 如果没有就阻塞
                 if (false !== $message && !empty($message)) {
                     $taskID   = $message['content']['id'];
                     $taskData = $message['content']['data'];
@@ -674,10 +678,11 @@ namespace Worker
 
             if (self::$_masterPid == posix_getpid()) { // for master process
                 self::log("Worker Process[".basename(self::$_startFile)."] Stopping ...");
+
                 $workerPids = self::getAllWorkerPids();
                 foreach ($workerPids as $pid) {
                     posix_kill($pid, SIGINT);
-                    Timer::add(1, function($timerId) use ($pid) {
+                    Timer::add(2, function($timerId) use ($pid) {
                         posix_kill($pid, SIGKILL);
                     }, false);
                 }
@@ -685,10 +690,11 @@ namespace Worker
                 $taskPids = self::getAllTaskPids();
                 foreach ($taskPids as $taskPid) {
                     posix_kill($taskPid, SIGINT);
-                    Timer::add(1, function($timerId) use ($taskPid) {
+                    Timer::add(2, function($timerId) use ($taskPid) {
                         posix_kill($taskPid, SIGKILL);
                     }, false);
                 }
+
             } else { // for task_process and  worker_process
                 foreach (self::$_workers as $worker) { 
                     $worker->stop(); // 子进程收到信号，我们是用$this 找不到worker对象的，所以用这种方式处理
@@ -845,7 +851,7 @@ namespace Worker
                     self::log("WORKER[$startFile] is stoping ...");
                     $master_pid && posix_kill($master_pid, SIGINT); // 给主进程发送ctl+c产生的信号
                     // Timeout
-                    $timeout = 10;
+                    $timeout = 5;
                     $start_time = time();
                     // 检查主进程是否还是存在状态
                     while(1) {
@@ -853,6 +859,7 @@ namespace Worker
                         if ($master_is_alive) {
                             if (time() - $start_time >= $timeout) {
                                 self::log("WORKER[$startFile] stop fail.");
+                                self::cleanMessageQueue();
                                 exit(250);
                             }
                             usleep(10000);
