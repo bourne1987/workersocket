@@ -845,7 +845,7 @@ namespace Worker
                     self::log("WORKER[$startFile] is stoping ...");
                     $master_pid && posix_kill($master_pid, SIGINT); // 给主进程发送ctl+c产生的信号
                     // Timeout
-                    $timeout = 5;
+                    $timeout = 10;
                     $start_time = time();
                     // 检查主进程是否还是存在状态
                     while(1) {
