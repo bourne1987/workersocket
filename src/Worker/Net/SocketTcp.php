@@ -176,9 +176,6 @@ namespace Worker\Net
             return;
         }
 
-        /**
-         * send 发送数据
-         */
         public function send($send_buffer) 
         {
             // 需要发送的数据是不是需要通过协议做包装
@@ -194,6 +191,21 @@ namespace Worker\Net
 
             // first call this method send data to client
             if ($this->_sendBuffer === '') {
+                if (self::MAX_SEND_BUFFER_SIZE <= strlen($send_buffer)) {
+                    SocketInterface::$statistics['send_fail']++;
+
+                    if (isset($this->_serv->_methods['error']) && is_callable($this->_serv->_methods['error'])) {
+                        try {
+                            call_user_func($this->_serv->_methods['error'], $this->_serv, $this, $this->_id,"sent buffer full and drop package");
+                        } catch (\Exception $e) {
+                            SocketInterface::$statistics['throw_exception']++;
+                            Server::log($e->getMessage()." error callbackFunc fail.");
+                        }
+                    }
+
+                    return false;
+                }
+
                 $len = fwrite($this->_socket, $send_buffer);
                 // send data success for one time
                 if ($len === strlen($send_buffer)) {
