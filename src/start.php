@@ -44,6 +44,8 @@ spl_autoload_register(function($className){
                 case 'workerprocess':
                     class_alias("Worker\\Process", 'WorkerProcess');
                     break;
+                case 'workerlibutil':
+                    class_alias("Worker\\Lib\\Util", 'WorkerLibUtil');
                 default:
                     return false;
             }            
