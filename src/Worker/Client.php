@@ -20,6 +20,7 @@ namespace Worker
     use Worker\Events\Libevent;
     use Worker\Protocols\ProtocolInterface;
     use Worker\Timers\Timer;
+    use Worker\Server;
 
     class Client
     {
@@ -95,7 +96,7 @@ namespace Worker
          * 
          * @param mixed $host 地址
          * @param mixed $port 端口
-         * @param mixed $timeOut 超时时间
+         * @param mixed $timeOut 超时时间, 如果设置为-1; 那就走默认的超时时间
          * @param string $flag 阻塞/非阻塞
          * @return void
          */
@@ -122,6 +123,9 @@ namespace Worker
                 if (!$this->isConnected()) {
                     return false;
                 }
+
+                // 设置超时时间
+                stream_set_timeout($this->socket, $this->socketName['timeOut']);
 
                 if ($this->isSync === self::SOCKET_ASYNC) {
                     stream_set_blocking($this->socket, 0);
@@ -251,13 +255,11 @@ namespace Worker
                 $protocol = "\\Worker\\Protocols\\".$this->protocol;
                 $sendData = $protocol::encode($sendData, $this);
                 if ($sendData === '') {
-                    echo "包有问题。\n";
                     return false;
                 }
             }
 
             if (strlen($sendData) > self::MAX_SEND_BUFFER_SIZE) {
-                echo "包过大\n";
                 $this->close();
                 return false;
             }
