@@ -17,10 +17,9 @@
 namespace Worker 
 {
     use Worker\Events\EventInterface;
-    use Worker\Events\Libevent;
     use Worker\Protocols\ProtocolInterface;
-    use Worker\Timers\Timer;
-    use Worker\Server;
+    use Worker\Lib\Util;
+    use Worker\Events\GlobalEvent;
 
     class Client
     {
@@ -43,23 +42,22 @@ namespace Worker
         );
 
         protected $isSync     = "";
-        protected $event      = null;
         protected $protocol   = ""; // 当前客户端的需要的解析协议
         protected $transport  = 'tcp'; // 通讯方式, 默认是TCP协议
 
+        // connect的时候存储: 
+        // 值array("host" => '','port' => '','local_socket' => 'tcp://127.0.0.1:9501','timeOut' => '', 'flag' => 同步/异步)
         protected $socketName = array(); 
-        // array("host" => '', 'port' => '', 'local_socket' => 'tcp://127.0.0.1:9501', 'timeOut' => '', 
-        // 'flag' => 同步/异步)
 
         // 注册的函数 "connect", "receive", "error", "close"
         protected $onMethods  = array();
-        protected $socket     = null;
-        protected $context    = "";
-        protected $error      = "";
-        protected $errno      = "";
-        protected $recvBuffer = "";
+        protected $socket     = null;   // 当前链接的socket
+        protected $error      = "";     // 当前链接的错误信息
+        protected $errno      = "";     // 当前链接的错误编号
+        protected $recvBuffer = "";     // 接收到的所有数据
+        protected $sendBuffer = ""; 
+        protected $isPersistent = false; // 是否长链
         protected $currentPackageLength = 0; // 当前包长度
-        protected $isPersistent = false;
 
         
         /**
@@ -67,17 +65,12 @@ namespace Worker
          * 
          * @param int $scheme 表示当前scheme需要用TCP通讯方式还是UDP通讯方式
          * @param int $isSync 阻塞/非阻塞
-         * @param $isPersistent  长链/短链, 表示下次过来这个链接会不会复用
+         * @param $isPersistent  TRUE长链/FLASE短链, 表示下次过来这个链接会不会复用
          * @return void
          */
         public function __construct($scheme, $isSync = self::SOCKET_SYNC, $isPersistent = false)
         {
             /*{{{*/
-            if (empty($this->event)) {
-                $this->event = new Libevent();
-                Timer::init($this->event);
-            }
-
             if (strtolower($scheme) !== 'tcp' && strtolower($scheme) !== 'udp') {
                 $this->protocol = ucfirst($scheme);
             }
@@ -86,7 +79,7 @@ namespace Worker
                 $this->transport = self::$builtinTransports[$scheme];
             }
 
-            $this->isSync = $isSync;
+            $this->isSync = $isSync; // 同步/异步
             $this->isPersistent = $isPersistent;
             /*}}}*/
         }
@@ -97,53 +90,60 @@ namespace Worker
          * @param mixed $host 地址
          * @param mixed $port 端口
          * @param mixed $timeOut 超时时间, 如果设置为-1; 那就走默认的超时时间
-         * @param string $flag 阻塞/非阻塞
-         * @return void
+         * @param string $flag 阻塞/非阻塞 SOCKET_ASYNC/SOCKET_SYNC
+         * @return void 成功返回当前socket，失败返回false
          */
         public function connect($host, $port, $timeOut = -1, $flag = "")
         {
+            // 如果之前有connect链接，先关闭，然后在创建socket, 有可能同一个WorkerClient会被调用多次connect
+            if ($this->isConnected()) {
+                return false;
+            }
+
             $this->socketName['host'] = $host;
             $this->socketName['port'] = $port;
             $this->socketName['local_socket'] = $this->transport."://".$host.":".$port;
+
             if ($timeOut === -1) {
                 $timeOut = ini_get("default_socket_timeout");
             }
+
             $this->socketName['timeOut'] = $timeOut;
 
             if ($this->transport === "tcp") {
                 $flag = empty($flag) ? $this->isSync : $flag;
+                $this->socketName['flag'] = $flag;
+
                 if ($flag === self::SOCKET_SYNC) {
-                    $flag = $this->isPersistent ? STREAM_CLIENT_CONNECT|STREAM_CLIENT_PERSISTENT : STREAM_CLIENT_CONNECT;
+                    $flags = $this->isPersistent ? STREAM_CLIENT_CONNECT|STREAM_CLIENT_PERSISTENT : STREAM_CLIENT_CONNECT;
                 } else {
-                    $flag = STREAM_CLIENT_ASYNC_CONNECT;
+                    $flags = STREAM_CLIENT_ASYNC_CONNECT;
                 }
 
-                $this->socketName['flag'] = $flag;
-                $this->socket = @stream_socket_client($this->socketName['local_socket'], $this->errno, $this->error, $timeOut, $flag);
+                $this->socket = @stream_socket_client($this->socketName['local_socket'], $this->errno, $this->error, $timeOut, $flags);
+
                 if (!$this->isConnected()) {
                     return false;
                 }
 
-                // 设置超时时间
-                stream_set_timeout($this->socket, $this->socketName['timeOut']);
-
-                if ($this->isSync === self::SOCKET_ASYNC) {
+                if ($flag === self::SOCKET_ASYNC) {
                     stream_set_blocking($this->socket, 0);
                     if (isset($this->onMethods['connect']) && is_callable($this->onMethods['connect'])) {
                         try {
                             call_user_func($this->onMethods['connect'], $this);
                         } catch (\Exception $e) {
-                           $this->error($e->getMessage());
+                            $this->error($e->getMessage());
                         }
                     }
 
-                    $this->event->add(EventInterface::EV_READ, $this->socket, array($this, "asyncRead"));
-                    $this->event->loop();
+                    GlobalEvent::getEvent()->add(EventInterface::EV_READ, $this->socket, array($this, "asyncRead"));
+                    GlobalEvent::getEvent()->loop();
                     exit(0);
                 } 
 
-                // 同步阻塞
-                return true;
+                stream_set_timeout($this->socket, $this->socketName['timeOut']); // 设置客户端socket超时时间
+                return $this->socket;
+
             } elseif ($this->transport === 'udp') {
                 // TODO udp实现
             }
@@ -154,10 +154,11 @@ namespace Worker
          */
         public function asyncRead()
         {
-            $buffer = @fread($this->socket, self::READ_BUFFER_SIZE);
+            $buffer = @fread($this->socket, self::READ_BUFFER_SIZE);/*{{{*/
             if ($buffer === '' || $buffer === false) { 
                 // if socket been closed ; so closed this socket;
                 if (!is_resource($this->socket) || feof($this->socket) || $buffer === '') {
+                    $this->error("asyncRead socket closed.");
                     $this->close();
                 }
                 return;
@@ -178,7 +179,7 @@ namespace Worker
                             return;
                         }
                     } else {
-                        echo "worker client receive buffer error!\n";
+                        $this->error("WorkerClient asyncRead Data for protocol error!");
                         $this->close();
                         return;
                     }
@@ -200,6 +201,7 @@ namespace Worker
                         }
                     }
                 }
+
                 return;
             }
 
@@ -211,9 +213,9 @@ namespace Worker
                 }
             }
             $this->recvBuffer = "";
-            return;
-        }
 
+            return;/*}}}*/
+        }
                 
         /**
          * 检查当前client是否连接上了服务器
@@ -235,6 +237,11 @@ namespace Worker
             return socket_import_stream($this->socket);
         }
 
+        public function getStreamSocket()
+        {
+            return $this->socket;
+        }
+
         /**
          * 调用成功返回一个数组，如：array('host' => '127.0.0.1', 'port' => 53652)
          */
@@ -247,52 +254,89 @@ namespace Worker
          * 同步函数
          * 发送数据到远程服务器，必须在建立连接后，才可向Server发送数据
          * 成功发送返回的已发数据长度
-         * 失败返回false
+         * 失败返回false, 没写完返回null， 写完返回true
          */
         public function send($sendData)
         {
-            if ($this->protocol) {
+            if ($this->protocol) {/*{{{*/
                 $protocol = "\\Worker\\Protocols\\".$this->protocol;
                 $sendData = $protocol::encode($sendData, $this);
                 if ($sendData === '') {
+                    $this->error('WorkerClient send Data for protocol error.');
                     return false;
                 }
             }
 
-            if (strlen($sendData) > self::MAX_SEND_BUFFER_SIZE) {
-                $this->close();
-                return false;
-            }
-
-            $sendLength = "";
-
-            while (strlen($sendData) > 0 && ($sendLength = @fwrite($this->socket, $sendData)) > 0) {
-                if ($sendLength === strlen($sendData)) {
-                    break;
+            if ($this->sendBuffer === '') {
+                if (self::MAX_SEND_BUFFER_SIZE <= strlen($sendData)) {
+                    $this->error("send-data more than max buffer");
+                    return false;
                 }
-                $sendData = substr($sendData, $sendLength);
-            }
 
-            if (!is_resource($this->socket) || feof($this->socket) || $sendLength === false || $sendLength < 0 ) {
-                $this->close();
-                return false;
-            }
+                $len = fwrite($this->socket, $sendData);
+                if ($len === strlen($sendData)) {
+                    return true;
+                }
 
-            return true;
-        }
-        
-        /**
-         * TODO 
-         * 向任意IP:PORT的主机发送UDP数据包
-         */
-        public function sendto($ip, $port, $data)
-        {
+                if ($len > 0) {
+                    $this->sendBuffer = substr($sendData, $len);
+                } else {
+                    if (!is_resource($this->socket) || feof($this->socket)) {
+                        $this->error("send data to server error!");
+                        $this->close();
+                        return false;
+                    }
+
+                    $this->sendBuffer = $sendData;
+                }
                 
+                if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
+                    $this->error("send buffer full.");
+                }
+                
+                GlobalEvent::getEvent()->add(EventInterface::EV_WRITE, $this->socket, array($this, 'baseWrite'));
+                return null;
+            } else {
+                if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
+                    $this->error("drop send package because full.");
+                    return false;
+                }
+
+                $this->sendBuffer .= $sendData;
+
+                if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
+                    $this->error("send buffer full.");
+                }
+
+                return null;
+            }/*}}}*/
+        }
+
+        public function baseWrite()
+        {
+            if (strlen($this->sendBuffer) <= 0) {/*{{{*/
+                GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
+            }
+
+            $len = fwrite($this->socket, $this->sendBuffer);
+            if ($len === strlen($this->sendBuffer)) {
+                GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
+                $this->sendBuffer = '';
+            }
+
+            if ($len > 0) {
+                $this->sendBuffer = substr($this->sendBuffer, $len);
+            } else {
+                $this->error("baseWrite send data to server error.");
+                $this->close();
+            }
+            /*}}}*/
         }
 
         /**
          * 同步函数
-         * recv 接收数据返回，这个函数会一次收取所有发送过来的数据
+         * recv 接收数据返回，这个函数会一次收取所有发送过来的数据, 所以数据
+         * 有可能是半个包+一个包； 一个包 + 半个包；半个包 + 半个包
          * 
          * @param int $size 长度
          * @param int $flag 是否等待所有数据全部返回 0、non-wait， 1、wait
@@ -306,6 +350,7 @@ namespace Worker
                 if ($readBuffer === '' || $readBuffer === false) { 
                     // if socket been closed ; so closed this socket;
                     if (!is_resource($this->socket) || feof($this->socket) || $readBuffer === '') {
+                        $this->error("recv client socket closed.");
                         $this->close();
                     }
                     return false;
@@ -323,18 +368,20 @@ namespace Worker
                 }
             }
 
-            //var_dump($readData);    
             if ($this->protocol) {
                 $protocol = "\\Worker\\Protocols\\".$this->protocol;
                 $length = $protocol::input($readData);
+
                 if ($length === ProtocolInterface::PACKAGE_NOT_COMPLETE) {
+                    $this->error("recv data don't complete.");
                     return false;
                 } else if ($length > 0)  {
                     if ($length > strlen($readData)) { // 不够一个包
+                        $this->error("recv data don't complete.");
                         return false;
                     }
                 } else {
-                    echo "worker client rec method buffer error!\n";
+                    $this->error("recv data error.");
                     $this->close();
                     return false;
                 }
@@ -346,8 +393,8 @@ namespace Worker
                     $OneCompletePack = substr($readData, 0, $length);
                 }
 
-                $readData = $protocol::decode($OneCompletePack, $this);
-                return $readData;
+                $recvData = $protocol::decode($OneCompletePack, $this);
+                return $recvData;
             }
 
             return $readData;
@@ -358,10 +405,13 @@ namespace Worker
          */
         public function close()
         {
-            if ($this->event) {
-                $this->event->del(EventInterface::EV_READ, $this->socket);
-                $this->event->del(EventInterface::EV_WRITE, $this->socket);
+            if (GlobalEvent::getEvent()) {
+                GlobalEvent::getEvent()->del(EventInterface::EV_READ, $this->socket);
+                GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
             }
+
+            $this->recvBuffer = "";
+            $this->sendBuffer = "";
 
             if (isset($this->onMethods['close']) && is_callable($this->onMethods['close'])) {
                 try {
@@ -381,47 +431,41 @@ namespace Worker
                 try {
                     call_user_func($this->onMethods['error'], $this, $execptionError);
                 } catch (\Exception $e) {
-                    exit(0);
+                    throw new Exception($e->getMessage());
                 }
             }
         }
 
         /**
-         * 哪里都可以用，只要你可以让cli常驻
+         * 定时器
          */
-        public function tick($time_interval, $func)
+        public static function tick($timeInterval, $func)
         {
-            return Timer::add($time_interval, $func, true);
+            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER, $timeInterval, $func);
         }
 
         /**
-         * 哪里都可以用
+         * 多少时间之后执行
          */
-        public function after($time_interval, $func)
+        public static function after($timeInterval, $func)
         {
-            Timer::add($time_interval, $func, false);
+            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER_ONCE, $timeInterval, $func);
         }
 
         /**
-         * 哪里都可以用
+         * 删除某个定时器
          */
-        public function clearTimer($timer_id)
+        public static function clearTimer($timerId)
         {
-            Timer::del($timer_id);
+            GlobalEvent::getEvent()->del(EventInterface::EV_TIMER, $timerId);
         }
 
         /**
-         * 哪里都可以用
+         * 删除所有定时器
          */
-        public function clearAllTimer()
+        public static function clearAllTimer()
         {
-            Timer::delAll();
-        }
-
-
-        public function __destruct()
-        {
-            //echo "___销毁客户端___\n";
+            GlobalEvent::getEvent()->clearAllTimer();
         }
 
         /**
@@ -433,6 +477,15 @@ namespace Worker
             if (in_array($methodName, $methods) && is_callable($method)) {
                 $this->onMethods[$methodName] = $method;
             }
+        }
+
+        /**
+         * TODO 
+         * 向任意IP:PORT的主机发送UDP数据包
+         */
+        public function sendto($ip, $port, $data)
+        {
+                
         }
     }
 }
