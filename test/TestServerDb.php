@@ -6,7 +6,7 @@ $serv->taskCount = 0;
 $serv->on('receive', function($server, $connectSocket, $recordID, $data) {
     static $link = null;
     if ($link == null) {
-        $link = mysqli_connect("xxxx", "xxxx", "xxxx", "xxxx");
+        $link = mysqli_connect("ylmf", "ylmf", "xxxx", "xxxx");
         if (!$link) {
             $link = null;
             return;
