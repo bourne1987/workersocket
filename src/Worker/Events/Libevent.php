@@ -144,6 +144,8 @@ namespace Worker\Events
 
             if (EventInterface::EV_TIMER === $flag) {
                 event_add($event, $timeout);
+            } elseif (EventInterface::EV_TIMER_ONCE === $flag) {
+                $this->del(EventInterface::EV_TIMER_ONCE, $timerId);
             }
 
             if (is_callable($callbackFunc)) {

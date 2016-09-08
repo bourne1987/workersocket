@@ -1,6 +1,8 @@
 <?php
 /**
- * 
+ * 切记切记，在收发数据的时候，如果使用libevent监听了对象，在监听函数里面如果引用了当前对象
+ * 就算调用了close函数，也不会销毁当前对象，因为执行close函数，并不会在libevent中del掉监听对象
+ * 所以此对象一定会在libevent中被引用，不会自动销毁的
  *
  * Licensed under The MIT License
  * For full copyright and license information, please see the MIT-LICENSE.txt
@@ -336,15 +338,38 @@ namespace Worker\Net
             $this->_status = self::STATUS_CLOSED;
             Server::$_globalEvent->del(EventInterface::EV_READ, $this->_socket);
             Server::$_globalEvent->del(EventInterface::EV_WRITE, $this->_socket);
-            @fclose($this->_socket);
+            fclose($this->_socket);
 
             if ($this->_serv && isset($this->_serv->connections[$this->_id])) {
                 unset($this->_serv->connections[$this->_id]);
             }
 
+            // -----------------------------  清理专属当前链接对象的监听 ----------------------------
+            if ($this->eventTimers) {
+                foreach ($this->eventTimers as $timerId) {
+                    Server::$_globalEvent->del(EventInterface::EV_TIMER, $timerId);
+                }
+            }
+            if ($this->eventSignals) {
+                foreach ($this->eventSignals as $signo) {
+                    Server::$_globalEvent->del(EventInterface::EV_SIGNAL, $signo);
+                }
+            }
+            if ($this->eventReads) {
+                foreach ($this->eventReads as $fd) {
+                    Server::$_globalEvent->del(EventInterface::EV_READ, $fd);
+                }
+            }
+            if ($this->eventWrites) {
+                foreach ($this->eventWrites as $fd) {
+                    Server::$_globalEvent->del(EventInterface::EV_WRITE, $fd);
+                }
+            }
+            // -----------------------------  清理专属当前链接对象的监听 ----------------------------
+
             if (isset($this->_serv->_methods['close']) && is_callable($this->_serv->_methods['close'])) {
                 try {
-                    call_user_func($this->_serv->_methods['close'], $this->_serv, $this->_id);
+                    call_user_func($this->_serv->_methods['close'], $this->_serv, $this, $this->_id);
                 } catch (\Exception $e) {
                     Server::log($e->getMessage()." close callbackFunc error.");
                     SocketInterface::$statistics['throw_exception']++;
@@ -358,6 +383,7 @@ namespace Worker\Net
             if ($this->_status === self::STATUS_CLOSED) {
                 return;
             } 
+
 
             // 需要发送的数据已经发送完了，直接调用关闭吧
             if ($this->_sendBuffer === '') {

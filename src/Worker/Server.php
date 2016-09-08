@@ -445,10 +445,11 @@ namespace Worker
                                 foreach ($worker->connections as $record_id => $connection) {
                                     if (empty($connection->lastMessageTime)) {
                                         $connection->lastMessageTime = $time_now;
+                                        //echo $connection->lastMessageTime."\n";
                                         continue;
                                     }
                                     // 上次通讯时间间隔大于心跳间隔，则认为客户端已经下线，关闭连接
-                                    if ($time_now - $connection->lastMessageTime > $worker->heartbeatIdleTime) {
+                                    if ($time_now - $connection->lastMessageTime > ($worker->heartbeatIdleTime) / 1000) {
                                         $connection->close();
                                     }
                                 }
@@ -1086,7 +1087,7 @@ namespace Worker
                         continue;
                     }
                     // 上次通讯时间间隔大于心跳间隔，则认为客户端已经下线，关闭连接
-                    if ($time_now - $connection->lastMessageTime > $this->heartbeatIdleTime) {
+                    if ($time_now - $connection->lastMessageTime > ($this->heartbeatIdleTime)/1000) {
                         if ($if_close_connection) {
                             $connection->close();
                         } else {

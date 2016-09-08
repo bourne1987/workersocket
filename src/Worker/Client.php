@@ -153,7 +153,8 @@ namespace Worker
          */
         public function asyncRead()
         {
-            $buffer = @fread($this->socket, self::READ_BUFFER_SIZE);/*{{{*/
+            /*{{{*/
+            $buffer = @fread($this->socket, self::READ_BUFFER_SIZE);
             if ($buffer === '' || $buffer === false) { 
                 // if socket been closed ; so closed this socket;
                 if (!is_resource($this->socket) || feof($this->socket) || $buffer === '') {

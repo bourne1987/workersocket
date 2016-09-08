@@ -22,5 +22,10 @@ namespace Worker\Net
             'throw_exception'  => 0, // 异常数
             'send_fail'        => 0, // 发送数据错误数
         );
+
+        public $eventTimers  = array();
+        public $eventSignals = array();
+        public $eventReads   = array();
+        public $eventWrites  = array();
     }
 }
