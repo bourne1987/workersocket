@@ -18,7 +18,6 @@ namespace Worker
 {
     use Worker\Events\EventInterface;
     use Worker\Protocols\ProtocolInterface;
-    use Worker\Lib\Util;
     use Worker\Events\GlobalEvent;
 
     class Client
@@ -95,8 +94,9 @@ namespace Worker
          */
         public function connect($host, $port, $timeOut = -1, $flag = "")
         {
-            // 如果之前有connect链接，先关闭，然后在创建socket, 有可能同一个WorkerClient会被调用多次connect
+            // 如果当前客户端已经有链接连上了， 必须先close掉在然后connect
             if ($this->isConnected()) {
+                $this->error("connection been create, please close connection first.");
                 return false;
             }
 
@@ -123,6 +123,7 @@ namespace Worker
                 $this->socket = @stream_socket_client($this->socketName['local_socket'], $this->errno, $this->error, $timeOut, $flags);
 
                 if (!$this->isConnected()) {
+                    $this->error("create client connection error.");
                     return false;
                 }
 
@@ -138,7 +139,6 @@ namespace Worker
 
                     GlobalEvent::getEvent()->add(EventInterface::EV_READ, $this->socket, array($this, "asyncRead"));
                     GlobalEvent::getEvent()->loop();
-                    //exit(0);
                 } else {
                     stream_set_timeout($this->socket, $this->socketName['timeOut']); // 设置客户端socket超时时间
                     return $this->socket;
@@ -157,7 +157,7 @@ namespace Worker
             if ($buffer === '' || $buffer === false) { 
                 // if socket been closed ; so closed this socket;
                 if (!is_resource($this->socket) || feof($this->socket) || $buffer === '') {
-                    $this->error("asyncRead socket closed.");
+                    $this->error("asyncRead socket been closed.");
                     $this->close();
                 }
                 return;
@@ -211,6 +211,7 @@ namespace Worker
                     $this->error($e->getMessage());
                 }
             }
+
             $this->recvBuffer = "";
 
             return;/*}}}*/
@@ -233,9 +234,15 @@ namespace Worker
          */
         public function getSocket()
         {
-            return socket_import_stream($this->socket);
+            if (is_resource($this->socket)) {
+                return socket_import_stream($this->socket);
+            }
+            return false;
         }
 
+        /**
+         * 返回stream socket
+         */
         public function getStreamSocket()
         {
             return $this->socket;
@@ -257,22 +264,28 @@ namespace Worker
          */
         public function send($sendData)
         {
-            if ($this->protocol) {/*{{{*/
+            /*{{{*/
+            if (!$sendData) { // 不可发送空数据包
+                $this->error("can't send null-data to server.");
+                return false;
+            }
+
+            if ($this->protocol) {
                 $protocol = "\\Worker\\Protocols\\".$this->protocol;
                 $sendData = $protocol::encode($sendData, $this);
                 if ($sendData === '') {
-                    $this->error('WorkerClient send Data for protocol error.');
+                    $this->error('client pack data error.');
                     return false;
                 }
             }
 
             if ($this->sendBuffer === '') {
                 if (self::MAX_SEND_BUFFER_SIZE <= strlen($sendData)) {
-                    $this->error("send-data more than max buffer");
+                    $this->error("send data to server more than max buffer.");
                     return false;
                 }
 
-                $len = fwrite($this->socket, $sendData);
+                $len = @fwrite($this->socket, $sendData);
                 if ($len === strlen($sendData)) {
                     return true;
                 }
@@ -281,7 +294,7 @@ namespace Worker
                     $this->sendBuffer = substr($sendData, $len);
                 } else {
                     if (!is_resource($this->socket) || feof($this->socket)) {
-                        $this->error("send data to server error!");
+                        $this->error("send data to server error, socket been closed!");
                         $this->close();
                         return false;
                     }
@@ -290,21 +303,22 @@ namespace Worker
                 }
                 
                 if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
-                    $this->error("send buffer full.");
+                    $this->error("sendbuffer is full.");
                 }
                 
                 GlobalEvent::getEvent()->add(EventInterface::EV_WRITE, $this->socket, array($this, 'baseWrite'));
+
                 return null;
             } else {
                 if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
-                    $this->error("drop send package because full.");
+                    $this->error("drop send package, because sendbuffer is full.");
                     return false;
                 }
 
                 $this->sendBuffer .= $sendData;
 
                 if (self::MAX_SEND_BUFFER_SIZE <= strlen($this->sendBuffer)) {
-                    $this->error("send buffer full.");
+                    $this->error("sendbuffer is full.");
                 }
 
                 return null;
@@ -313,11 +327,12 @@ namespace Worker
 
         public function baseWrite()
         {
-            if (strlen($this->sendBuffer) <= 0) {/*{{{*/
+            /*{{{*/
+            if (strlen($this->sendBuffer) <= 0) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
             }
 
-            $len = fwrite($this->socket, $this->sendBuffer);
+            $len = @fwrite($this->socket, $this->sendBuffer);
             if ($len === strlen($this->sendBuffer)) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
                 $this->sendBuffer = '';
@@ -326,8 +341,10 @@ namespace Worker
             if ($len > 0) {
                 $this->sendBuffer = substr($this->sendBuffer, $len);
             } else {
-                $this->error("baseWrite send data to server error.");
-                $this->close();
+                if (!is_resource($this->socket) || feof($this->socket)) {
+                    $this->error("send data to server error, socket been closed!");
+                    $this->close();
+                }
             }
             /*}}}*/
         }
@@ -344,14 +361,20 @@ namespace Worker
         public function recv($size = 65535, $flag = 0)
         {
             $readData = "";
+            if ($size <= 0) {
+                $this->error("recv data's size is null.");
+                return false;
+            }
+
             while ($size > 0) {
                 $readBuffer = @fread($this->socket, $size);
                 if ($readBuffer === '' || $readBuffer === false) { 
                     // if socket been closed ; so closed this socket;
                     if (!is_resource($this->socket) || feof($this->socket) || $readBuffer === '') {
-                        $this->error("recv client socket closed.");
+                        $this->error("recv client socket been closed.");
                         $this->close();
                     }
+
                     return false;
                 } else {
                     $readData .= $readBuffer;
@@ -381,6 +404,7 @@ namespace Worker
                     }
                 } else {
                     $this->error("recv data error.");
+                    // 出现解包错误，证明当前链接的协议都不对，必须关掉当前链接
                     $this->close();
                     return false;
                 }
@@ -392,8 +416,7 @@ namespace Worker
                     $OneCompletePack = substr($readData, 0, $length);
                 }
 
-                $recvData = $protocol::decode($OneCompletePack, $this);
-                return $recvData;
+                return $protocol::decode($OneCompletePack, $this);
             }
 
             return $readData;
@@ -484,6 +507,22 @@ namespace Worker
             if (in_array($methodName, $methods) && is_callable($method)) {
                 $this->onMethods[$methodName] = $method;
             }
+        }
+
+        /**
+         * 获取最后的链接错误信息
+         */
+        public function getLastError()
+        {
+            return $this->error;
+        }
+
+        /**
+         * 获取最后的链接错误代码
+         */
+        public function getLastErrorNo()
+        {
+            return $this->errno;
         }
 
         /**
