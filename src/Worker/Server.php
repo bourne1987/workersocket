@@ -77,7 +77,6 @@ namespace Worker
         protected static $_builtinTransports = array(
             'tcp'  => 'tcp',
             'udp'  => 'udp',
-            'unix' => 'unix',
         );
         protected $_transport = 'tcp'; 
         protected $_protocol = "";
@@ -315,7 +314,6 @@ namespace Worker
             // 重新注册信号用libevent来处理
             self::resetInstallSignal();
             Timer::init(self::$_globalEvent);
-            // TODO
             Timer::add(100, function($timer_id) {
                 // 当前进程用于监听消息队列的数据，它也只做这个事情，所以就算做阻塞也没事，lievent不会做其他事情的
                 // 获取所有队列中所有类型的数据
@@ -606,6 +604,7 @@ namespace Worker
                 posix_kill($onWorkerPid, SIGUSR1);
 
             } else {
+                // for clid process
                 foreach (self::$_workers as $worker) {
                     if ($worker->onWorkerReload && is_callable($worker->onWorkerReload)) {
                         try {
@@ -727,7 +726,7 @@ namespace Worker
 
         protected static function daemonize()
         {
-/*{{{*/
+            /*{{{*/
             if (!self::$_daemonize) {
                 return;
             }
@@ -736,7 +735,7 @@ namespace Worker
             umask(0);
             $pid = pcntl_fork();
             if (-1 === $pid) {
-                throw new Exception('fork fail');
+                throw new \Exception('fork fail');
                 exit(250);
             } elseif ($pid > 0) {
                 // parent process exit;
@@ -759,7 +758,7 @@ namespace Worker
                 exit(0);
             }
             // start child's child process;
-        /*}}}*/
+            /*}}}*/
         }
 
         /**
@@ -947,7 +946,7 @@ namespace Worker
                 stream_set_blocking($this->_mainSocket, 0); // 我们做的是异步非阻塞，这里接收数据和发送数据都改成非阻塞
                 // 到这里位置，在主进程每个WORKER都有了自己要监听的socket
             }
-/*}}}*/
+            /*}}}*/
         }
 
         /**
@@ -1087,7 +1086,7 @@ namespace Worker
                         continue;
                     }
                     // 上次通讯时间间隔大于心跳间隔，则认为客户端已经下线，关闭连接
-                    if ($time_now - $connection->lastMessageTime > $this->heartbeat_idle_time) {
+                    if ($time_now - $connection->lastMessageTime > $this->heartbeatIdleTime) {
                         if ($if_close_connection) {
                             $connection->close();
                         } else {
@@ -1099,9 +1098,6 @@ namespace Worker
             return $sockets;
         }
         
-        /**
-         * TODO 配置参数设置
-         */
         public function set($params = array())
         {
             $arrs = array('reloadable', 'heartbeatCheckInterval', 'heartbeatIdleTime', 'user', 'name', 'count', 'taskCount');

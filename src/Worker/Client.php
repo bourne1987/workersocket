@@ -265,7 +265,7 @@ namespace Worker
         public function send($sendData)
         {
             /*{{{*/
-            if (!$sendData) { // 不可发送空数据包
+            if (!$sendData) { // 客户端不可发送空数据包
                 $this->error("can't send null-data to server.");
                 return false;
             }
@@ -330,12 +330,14 @@ namespace Worker
             /*{{{*/
             if (strlen($this->sendBuffer) <= 0) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
+                return;
             }
 
             $len = @fwrite($this->socket, $this->sendBuffer);
             if ($len === strlen($this->sendBuffer)) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
                 $this->sendBuffer = '';
+                return;
             }
 
             if ($len > 0) {

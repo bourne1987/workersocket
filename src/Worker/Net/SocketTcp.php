@@ -98,7 +98,7 @@ namespace Worker\Net
         {
             SocketInterface::$statistics['total_request']++;
             // 从当前子进程的链接中读取READ_BUFFER_SIZE个数据
-            $buffer = fread($this->_socket, self::READ_BUFFER_SIZE);
+            $buffer = @fread($this->_socket, self::READ_BUFFER_SIZE);
 
             if ($buffer === '' || $buffer === false) { 
                 // if client been closed , server will be closed this conneciton;
@@ -176,6 +176,9 @@ namespace Worker\Net
             return;
         }
 
+        /**
+         * 服务端回数据，可以回空，本来业务有时候就是空
+         */
         public function send($send_buffer) 
         {
             // 需要发送的数据是不是需要通过协议做包装
@@ -206,7 +209,7 @@ namespace Worker\Net
                     return false;
                 }
 
-                $len = fwrite($this->_socket, $send_buffer);
+                $len = @fwrite($this->_socket, $send_buffer);
                 // send data success for one time
                 if ($len === strlen($send_buffer)) {
                     return true;
@@ -305,13 +308,17 @@ namespace Worker\Net
                 if ($this->_status === self::STATUS_CLOSED) {
                     $this->destroy();
                 }
+
+                return;
             } 
 
             if ($len > 0) {
                 $this->_sendBuffer = substr($this->_sendBuffer, $len);
             } else {
                 SocketInterface::$statistics['send_fail']++;
-                $this->destroy();
+                if (!is_resource($this->_socket) || feof($this->_socket)) {
+                    $this->destroy();
+                }
             }
         }
 
