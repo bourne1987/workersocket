@@ -49,8 +49,8 @@ namespace Worker
         public $onWorkerReload = null;      // 当前worker下的每个子进程在reload的时候回调
         public $onWorkerStop = null;        // 当前worker下的每个子进程停止回调函数
         public $reloadable = true;          // 当前WORKER下的子进程是否支持reload
-        public $heartbeatCheckInterval = 5; // 当前worker下的子进程每5秒检查一次心跳
-        public $heartbeatIdleTime = 10;     // 当前worker下的子进程如果超过10秒数据不通讯关闭连接
+        public $heartbeatCheckInterval = 5000; // 当前worker下的子进程每5秒检查一次心跳
+        public $heartbeatIdleTime = 10000;     // 当前worker下的子进程如果超过10秒数据不通讯关闭连接
         public $user = null;                // 当前worker下的进程和子进程的用户
         public $group = null;               // 当前worker下的进程和子进程的用户组
         protected $_workerId = null;        // 当前worker的ID
