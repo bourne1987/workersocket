@@ -316,7 +316,7 @@ namespace Worker
             self::resetInstallSignal();
             Timer::init(self::$_globalEvent);
             // TODO
-            Timer::add(0.1, function($timer_id) {
+            Timer::add(100, function($timer_id) {
                 // 当前进程用于监听消息队列的数据，它也只做这个事情，所以就算做阻塞也没事，lievent不会做其他事情的
                 // 获取所有队列中所有类型的数据
                 $message = $this->messageQueue->receiveMsg(0, MSG_IPC_NOWAIT); // 如果没有就阻塞
@@ -1028,7 +1028,7 @@ namespace Worker
                 return Timer::add($timeInterval, $func);
             }
 
-            return false;
+            return NULL;
         }
 
         /**
@@ -1041,7 +1041,7 @@ namespace Worker
                 return Timer::add($timeInterval, $func, false);
             }
 
-            return false;
+            return NULL;
         }
 
         /**
@@ -1050,7 +1050,7 @@ namespace Worker
          */
         public function clearTimer($timerId)
         {
-            Timer::del($timerId);
+            return Timer::del($timerId);
         }
 
         /**
@@ -1097,6 +1097,27 @@ namespace Worker
                 }
             }
             return $sockets;
+        }
+        
+        /**
+         * TODO 配置参数设置
+         */
+        public function set($params = array())
+        {
+            $arrs = array('reloadable', 'heartbeatCheckInterval', 'heartbeatIdleTime', 'user', 'name', 'count', 'taskCount', 'logFile');
+            $keys = array_keys($params);
+            $realParamNames = array_intersect($arrs, $keys);
+            // 检查哪些参数是可以设置的
+            if ($real) {
+                foreach ($realParamNames as $paramName) {
+                    if ($paramName === 'logFile') {
+                        self::$_logFile = $params[$paramName];
+                        continue;
+                    }
+
+                    $this->$paramName = $params[$paramName];
+                }
+            }
         }
     }
 }

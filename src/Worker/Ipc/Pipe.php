@@ -119,7 +119,7 @@ namespace Worker\Ipc
             }
 
             $data = "";
-            while (is_resource($this->_r_pipe) && ($readData = @fread($this->_r_pipe, $bytes)) > 0) {
+            while (is_resource($this->_r_pipe) && ($readData = fread($this->_r_pipe, $bytes)) > 0) {
                 $data .= $readData;
                 if (strlen($readData) === $bytes) {
                     break;

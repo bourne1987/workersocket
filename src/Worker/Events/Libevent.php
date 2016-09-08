@@ -68,7 +68,7 @@ namespace Worker\Events
                         return false;
                     }
 
-                    $timeout = $fd * 1000000;
+                    $timeout = $fd * 1000;
                     if (!event_add($event, $timeout)) {
                         return false;
                     }

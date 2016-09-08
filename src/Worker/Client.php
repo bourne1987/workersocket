@@ -138,12 +138,11 @@ namespace Worker
 
                     GlobalEvent::getEvent()->add(EventInterface::EV_READ, $this->socket, array($this, "asyncRead"));
                     GlobalEvent::getEvent()->loop();
-                    exit(0);
-                } 
-
-                stream_set_timeout($this->socket, $this->socketName['timeOut']); // 设置客户端socket超时时间
-                return $this->socket;
-
+                    //exit(0);
+                } else {
+                    stream_set_timeout($this->socket, $this->socketName['timeOut']); // 设置客户端socket超时时间
+                    return $this->socket;
+                }
             } elseif ($this->transport === 'udp') {
                 // TODO udp实现
             }
@@ -441,7 +440,11 @@ namespace Worker
          */
         public static function tick($timeInterval, $func)
         {
-            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER, $timeInterval, $func);
+            if (is_int($timeInterval)) {
+                return GlobalEvent::getEvent()->add(EventInterface::EV_TIMER, $timeInterval, $func);
+            }
+
+            return NULL;
         }
 
         /**
@@ -449,7 +452,11 @@ namespace Worker
          */
         public static function after($timeInterval, $func)
         {
-            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER_ONCE, $timeInterval, $func);
+            if (is_int($timeInterval)) {
+                return GlobalEvent::getEvent()->add(EventInterface::EV_TIMER_ONCE, $timeInterval, $func);
+            }
+
+            return NULL;
         }
 
         /**
@@ -457,7 +464,7 @@ namespace Worker
          */
         public static function clearTimer($timerId)
         {
-            GlobalEvent::getEvent()->del(EventInterface::EV_TIMER, $timerId);
+            return GlobalEvent::getEvent()->del(EventInterface::EV_TIMER, $timerId);
         }
 
         /**

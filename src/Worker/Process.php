@@ -1,7 +1,10 @@
 <?php
 /**
- * 1、PHP用libevent没有办法监听管道FD，做不了异步，所以改成用text协议来做通讯
- * 这个并没有做好，暂时先不要用
+ * 1、每次NEW一个WORKERPROCESS对象，只能开一个子进程调用一次start()
+ * 2、将当前进程变成守护进程，调用的时候必须在最前面
+ * 3、每个WorkerProcessD对象，只能fork一个子进程，父子进程都保存了管道
+ * 4、管道的读写，主进程和子进程都可以使用
+ * 5、注册信号函数，在使用之后，必须调用loop函数
  *
  * Licensed under The MIT License
  * For full copyright and license information, please see the MIT-LICENSE.txt
@@ -22,22 +25,27 @@ namespace Worker
 
     class Process
     {
-        public $name = "";// 当前子进程名
-
-        // 进程执行函数 主进程设置 *
+        // 存储所有的Process对象 array("processId"=>$processe...)
+        protected static $processes = array();
+        protected $processId = "";
+        protected static $masterPid = "";
+        // 主进程设置 
         protected $callFunc = ""; 
-        // 是否重定向主进程设置 *
+        // 是否重定向主进程设置 
         protected $redirect_stdin_stdout = false;
-        // 是否创建管道主进程设置 *
+        // 是否创建管道主进程设置 
         protected $create_pipe = false;
+        // 是否已经start了子进程了
+        protected $started = false;
 
-        protected static $pipe      = ""; // 当前子进程创建的管道的描述符, 子进程设置
-        protected static $pid       = 0;  // 当前创建的子进程ID; 子进程设置 *
-        protected static $pids      = array(); // 存储所有的子进程
-        protected static $masterPid = 0;
 
-        protected static $stdoutFile = '/dev/null'; // 重定向文件*
-        private static $_daemon = false; // 是否守护进程的标记
+        // 当前子进程名
+        protected $name = "";
+        // 每个进程都有自己的管道
+        protected $pipe = ""; 
+        protected static $stdoutFile = '/dev/null'; // 重定向文件
+        protected static $daemon = false; // 是否守护进程的标记
+        public $pid = ""; // 当前子进程ID
 
         /**
          * function : 回调函数
@@ -48,26 +56,58 @@ namespace Worker
         {
             $this->callFunc   = $function;
             $this->create_pipe = $create_pipe;
-            $this->redirect_stdin_stdout   = $redirect_stdin_stdout;
+            $this->redirect_stdin_stdout = $redirect_stdin_stdout;
+            $this->processId = spl_object_hash($this);
+            self::$processes[$this->processId] = $this;
+            if (!self::$masterPid) {
+                self::$masterPid = posix_getpid();
+            }
         }
 
-        // 子进程调用
+        /**
+         * 设置进程名称, running for master process
+         */
+        public function name($name)
+        {
+            $this->name = $name;
+        }
+
+        // 主/子进程调用
         public function write($data)
         {
-            return self::$pipe->send($data);
+            return $this->pipe->send($data);
         }
 
-        // 子进程调用
+        // 主/子进程调用
         public function read($buffer_size = 8192)
         {
-            return self::$pipe->revice($buffer_size);
+            return $this->pipe->revice($buffer_size);
         }
 
-        // 主进程调用
+        // 主进程调用, 并且一个workerprocess对象只能调用一次
         public function start()
         {
+            if ($this->started === true) {
+                return false;
+            }
+
+            $this->started = true;
+
+            // 创建属于当前进程自己的管道文件
+            if ($this->create_pipe === true) {
+                $this->pipe = new Pipe($this->processId);
+                if ($this->pipe->pipeFlag !== true) { // 创建管道文件不成功，退出子进程
+                    throw new Exception("create pipe error.");
+                    exit(250);
+                }
+            }
+
             $pid = pcntl_fork();
-            if ($pid === 0) {  // for child process
+            if ($pid > 0) { // for master process
+                $this->pid = "";
+            } else if ($pid === 0) {  // for child process
+                self::$processes = array();
+                $this->pid = posix_getpid();
                 // 设置进程标题
                 if (empty($this->name)) {
                     self::setProcessTitle("WORKER PROCESS : none");
@@ -75,23 +115,8 @@ namespace Worker
                     self::setProcessTitle("WORKER PROCESS : ".$this->name);
                 }
 
-                self::$pids = array();
-                self::$pid =  posix_getpid(); // 设置当前进程ID
-
                 if ($this->redirect_stdin_stdout) {
                     self::resetStd();
-                }
-
-                if ($this->create_pipe && empty(self::$pipe)) {
-                    // 给当前子进程创建一个管道
-                    self::$pipe = new Pipe();
-                    if (self::$pipe->pipeFlag !== true) {
-                        self::$pipe = NULL;
-                        throw new Exception("create pipe error.");
-                        exit(250);
-                    }
-                    // 忽略对SIGPIPE信号当前进程接收到之后不做任何处理, 直接忽略
-                    pcntl_signal(SIGPIPE, SIG_IGN, false);
                 }
 
                 if ($this->callFunc && is_callable($this->callFunc)) {
@@ -103,19 +128,15 @@ namespace Worker
                 }
 
                 GlobalEvent::getEvent()->loop();
-                self::log("process[".self::$pid."] exit sucess.");
+                self::log("process[".$this->pid."] exit sucess.");
                 exit(0);
             } elseif ($pid < 0) {
-                self::waitAll();
                 throw new Exception("cant't create process.");
                 exit(250);
             } 
-            
-            // for master process
-            self::$pids[$pid] = $pid;
-            if (!self::$masterPid) {
-                self::$masterPid = posix_getpid();
-            }
+
+            // master process
+            return $pid;
         }
 
         /**
@@ -136,38 +157,21 @@ namespace Worker
         }
 
         /**
-         * 阻塞回收所有的进程
-         */
-        public static function waitAll()
-        {
-            while (count(self::$pids) > 0) {
-                pcntl_signal_dispatch();
-                $status = 0;
-                $pid = pcntl_wait($status, WUNTRACED);   
-                if (isset(self::$pids[$pid])) {
-                    unset(self::$pids[$pid]);
-                }
-                pcntl_signal_dispatch();
-                self::log("回收进程[$pid]---状态[$status]");
-            }
-        }
-
-        /**
          * 重定向标准输入和输出
          */
         protected static function resetStd()
         {
             /*{{{*/
             global $STDOUT, $STDERR;
-            $handle = fopen(self::$_stdoutFile, "a");
+            $handle = fopen(self::$stdoutFile, "a");
             if ($handle) {
                 unset($handle);
                 @fclose(STDOUT);
                 @fclose(STDERR);
-                $STDOUT = fopen(self::$_stdoutFile, "a");
-                $STDERR = fopen(self::$_stdoutFile, "a");
+                $STDOUT = fopen(self::$stdoutFile, "a");
+                $STDERR = fopen(self::$stdoutFile, "a");
             } else {
-                throw new Exception('can not open stdoutFile ' . self::$_stdoutFile);
+                throw new Exception('can not open stdoutFile ' . self::$stdoutFile);
                 exit(250);
             }
             /*}}}*/
@@ -178,8 +182,9 @@ namespace Worker
          */
         protected static function setProcessTitle($title)
         {
-            if (function_exists('cli_set_process_title')) { // >= php5.5/*{{{*/
-@cli_set_process_title($title);
+            /*{{{*/
+            if (function_exists('cli_set_process_title')) { // >= php5.5
+                @cli_set_process_title($title);
             } else if (extension_loaded('proctitle') && function_exists('setproctitle')) { // Need proctitle extension when php <= 5.5
                 @setproctitle($title);
             }/*}}}*/
@@ -193,7 +198,7 @@ namespace Worker
         public static function daemon($nochdir = false, $noclose = false)
         {
             /*{{{*/
-            self::$_daemon = true;
+            self::$daemon = true;
             umask(0);
             $pid = pcntl_fork();
             if ($pid === -1) {
@@ -229,21 +234,26 @@ namespace Worker
         protected static function log($message)
         {
             $message = date('Y-m-d H:i:s')." [".posix_getpid()."] : " . $message."\n";/*{{{*/
-            if (!self::$_daemon) {
+            if (!self::$daemon) {
                 echo $message;
             }
             file_put_contents(WORKER_LOG."/process.log", $message, FILE_APPEND|LOCK_EX);/*}}}*/
         }
         
+        /**
+         * 只能用于event的进程
+         */
         public static function signal($signo, $callback)
         {
-            if (posix_getpid() !== self::$masterPid) {
-                // 子进程的信号用event, 子进程 没有while，用event处理信号，不用dispatch
-                GlobalEvent::getEvent()->add(EventInterface::EV_SIGNAL, $signo, $callback);
-            } else {
-                // 主进程设置信号用pcntl_signal, 因为主进程用while循环去dispatch，注意pcntl_wait会被信号打断
-                pcntl_signal($signo, $callback, false);
-            }
+            GlobalEvent::getEvent()->add(EventInterface::EV_SIGNAL, $signo, $callback);
+        }
+
+        /**
+         * 给某个进程发送信号
+         */
+        public static function kill($pid, $signo = 0)
+        {
+            return @posix_kill($pid, $signo);
         }
 
         /**
@@ -279,19 +289,27 @@ namespace Worker
         }
 
         /**
-         * 定时器
+         * 定时器, 毫秒级
          */
         public static function tick($timeInterval, $func)
         {
-            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER, $timeInterval, $func);
+            if (is_int($timeInterval)) {
+                return GlobalEvent::getEvent()->add(EventInterface::EV_TIMER, $timeInterval, $func);
+            }
+
+            return NULL;
         }
 
         /**
-         * 多少时间之后执行
+         * 多少时间之后执行, , 毫秒级
          */
         public static function after($timeInterval, $func)
         {
-            GlobalEvent::getEvent()->add(EventInterface::EV_TIMER_ONCE, $timeInterval, $func);
+            if (is_int($timeInterval)) {
+                return GlobalEvent::getEvent()->add(EventInterface::EV_TIMER_ONCE, $timeInterval, $func);
+            }
+
+            return NULL;
         }
 
         /**
@@ -299,7 +317,7 @@ namespace Worker
          */
         public static function clearTimer($timerId)
         {
-            GlobalEvent::getEvent()->del(EventInterface::EV_TIMER, $timerId);
+            return GlobalEvent::getEvent()->del(EventInterface::EV_TIMER, $timerId);
         }
         
         /**
@@ -308,6 +326,18 @@ namespace Worker
         public static function clearAllTimer()
         {
             GlobalEvent::getEvent()->clearAllTimer();
+        }
+
+        public function __destruct()
+        {
+            /**
+             * 主进程退出才销毁
+             */
+            if (self::$masterPid === posix_getpid() && self::$processes) {
+                foreach (self::$processes as $process) {
+                    $process->pipe->destroy();
+                }
+            }
         }
     }
 }
