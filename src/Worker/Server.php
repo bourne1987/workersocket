@@ -1104,20 +1104,20 @@ namespace Worker
          */
         public function set($params = array())
         {
-            $arrs = array('reloadable', 'heartbeatCheckInterval', 'heartbeatIdleTime', 'user', 'name', 'count', 'taskCount', 'logFile');
+            $arrs = array('reloadable', 'heartbeatCheckInterval', 'heartbeatIdleTime', 'user', 'name', 'count', 'taskCount');
             $keys = array_keys($params);
             $realParamNames = array_intersect($arrs, $keys);
             // 检查哪些参数是可以设置的
             if ($real) {
                 foreach ($realParamNames as $paramName) {
-                    if ($paramName === 'logFile') {
-                        self::$_logFile = $params[$paramName];
-                        continue;
-                    }
-
                     $this->$paramName = $params[$paramName];
                 }
             }
+        }
+
+        public static function setLogFile($logName)
+        {
+            self::$_logFile = $logName;
         }
     }
 }
