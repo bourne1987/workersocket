@@ -92,7 +92,7 @@ namespace Worker\Ipc
         public function removeQueue()
         {
             $flag = @msg_remove_queue($this->_msg);
-            var_dump(@unlink($this->_path));
+            @unlink($this->_path);
             return $flag;
         }
 
