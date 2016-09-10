@@ -57,6 +57,7 @@ namespace Worker
         protected $sendBuffer = ""; 
         protected $isPersistent = false; // 是否长链
         protected $currentPackageLength = 0; // 当前包长度
+        protected $remoteAddress = "";
 
         
         /**
@@ -120,24 +121,15 @@ namespace Worker
                     $flags = STREAM_CLIENT_ASYNC_CONNECT;
                 }
 
-                $this->socket = @stream_socket_client($this->socketName['local_socket'], $this->errno, $this->error, $timeOut, $flags);
+                $this->socket = stream_socket_client($this->socketName['local_socket'], $this->errno, $this->error, $timeOut, $flags);
 
                 if (!$this->isConnected()) {
-                    $this->error("create client connection error.");
+                    $this->error("1.create client connection error.");
                     return false;
                 }
 
                 if ($flag === self::SOCKET_ASYNC) {
-                    stream_set_blocking($this->socket, 0);
-                    if (isset($this->onMethods['connect']) && is_callable($this->onMethods['connect'])) {
-                        try {
-                            call_user_func($this->onMethods['connect'], $this);
-                        } catch (\Exception $e) {
-                            $this->error($e->getMessage());
-                        }
-                    }
-
-                    GlobalEvent::getEvent()->add(EventInterface::EV_READ, $this->socket, array($this, "asyncRead"));
+                    GlobalEvent::getEvent()->add(EventInterface::EV_WRITE, $this->socket, array($this, "checkConnection"));
                     GlobalEvent::getEvent()->loop();
                 } else {
                     stream_set_timeout($this->socket, $this->socketName['timeOut']); // 设置客户端socket超时时间
@@ -149,12 +141,56 @@ namespace Worker
         }
 
         /**
+         * 由于异步客户端存在不管客户端链接是否已经建立，都会返回FD，因此需要做一次检查
+         */
+        public function checkConnection()
+        {
+            // 链接有效
+            if (stream_socket_get_name($this->socket, true)) {
+                GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
+                stream_set_blocking($this->socket, 0);
+                stream_set_read_buffer($this->socket, 0);
+                
+                if (function_exists('socket_import_stream') && $this->transport === 'tcp') {
+                    $raw_socket = socket_import_stream($this->socket);
+                    socket_set_option($raw_socket, SOL_SOCKET, SO_KEEPALIVE, 1);
+                    socket_set_option($raw_socket, SOL_TCP, TCP_NODELAY, 1);
+                }
+
+                // 监听读
+                GlobalEvent::getEvent()->add(EventInterface::EV_READ, $this->socket, array($this, 'asyncRead'));
+
+                // 监听写
+                if ($this->sendBuffer) { 
+                    GlobalEvent::getEvent()->add(EventInterface::EV_WRITE, $this->socket, array($this, 'baseWrite'));
+                }
+
+                // 获取对端的地址
+                $this->remoteAddress = stream_socket_get_name($this->socket, true);
+                 
+                if ($this->onMethods['connect'] && is_callable($this->onMethods['connect'])) {
+                    try {
+                        call_user_func($this->onMethods['connect'], $this);
+                    } catch (\Exception $e) {
+                        $this->error($e->getMessage());
+                    }
+                }
+
+            } else {
+                // 链接错误
+                $this->socket = null;
+                $this->error("2、create client connection error.");
+                $this->close();
+            }
+        }
+
+        /**
          * 异步读取socket服务端传递过来的数据
          */
         public function asyncRead()
         {
             /*{{{*/
-            $buffer = @fread($this->socket, self::READ_BUFFER_SIZE);
+            $buffer = fread($this->socket, self::READ_BUFFER_SIZE);
             if ($buffer === '' || $buffer === false) { 
                 // if socket been closed ; so closed this socket;
                 if (!is_resource($this->socket) || feof($this->socket) || $buffer === '') {
@@ -223,11 +259,11 @@ namespace Worker
          */
         public function isConnected()
         {
-            if (is_resource($this->socket) && !feof($this->socket)) {
-                return true;
-            } else {
+            if (!$this->socket || !is_resource($this->socket) || feof($this->socket)) {
                 return false;
-            }
+            } 
+
+            return true;
         }
 
         /**
@@ -286,7 +322,7 @@ namespace Worker
                     return false;
                 }
 
-                $len = @fwrite($this->socket, $sendData);
+                $len = fwrite($this->socket, $sendData);
                 if ($len === strlen($sendData)) {
                     return true;
                 }
@@ -370,7 +406,7 @@ namespace Worker
             }
 
             while ($size > 0) {
-                $readBuffer = @fread($this->socket, $size);
+                $readBuffer = fread($this->socket, $size);
                 if ($readBuffer === '' || $readBuffer === false) { 
                     // if socket been closed ; so closed this socket;
                     if (!is_resource($this->socket) || feof($this->socket) || $readBuffer === '') {
@@ -430,7 +466,7 @@ namespace Worker
          */
         public function close()
         {
-            if (GlobalEvent::getEvent()) {
+            if (GlobalEvent::getEvent() && is_resource($this->socket)) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_READ, $this->socket);
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
             }
@@ -526,6 +562,11 @@ namespace Worker
         public function getLastErrorNo()
         {
             return $this->errno;
+        }
+
+        public function getRemoteHost()
+        {
+            return $this->remoteAddress;
         }
 
         /**

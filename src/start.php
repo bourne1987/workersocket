@@ -1,6 +1,8 @@
 <?php
-ini_set('display_errors', 'on');
 
+error_reporting(E_ALL);
+
+ini_set('display_errors', 'on');
 
 if (!extension_loaded('pcntl')) {
      exit("Please install pcntl extension.\n");

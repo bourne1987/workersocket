@@ -100,7 +100,7 @@ namespace Worker\Net
         {
             SocketInterface::$statistics['total_request']++;
             // 从当前子进程的链接中读取READ_BUFFER_SIZE个数据
-            $buffer = @fread($this->_socket, self::READ_BUFFER_SIZE);
+            $buffer = fread($this->_socket, self::READ_BUFFER_SIZE);
 
             if ($buffer === '' || $buffer === false) { 
                 // if client been closed , server will be closed this conneciton;
@@ -211,7 +211,7 @@ namespace Worker\Net
                     return false;
                 }
 
-                $len = @fwrite($this->_socket, $send_buffer);
+                $len = fwrite($this->_socket, $send_buffer);
                 // send data success for one time
                 if ($len === strlen($send_buffer)) {
                     return true;
@@ -300,7 +300,7 @@ namespace Worker\Net
                 return ;
             }
 
-            $len = @fwrite($this->_socket, $this->_sendBuffer);
+            $len = fwrite($this->_socket, $this->_sendBuffer);
             // send buffer over
             if ($len === strlen($this->_sendBuffer)) {
                 Server::$_globalEvent->del(EventInterface::EV_WRITE, $this->_socket);
