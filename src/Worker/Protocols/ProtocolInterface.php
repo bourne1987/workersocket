@@ -23,32 +23,32 @@ namespace Worker\Protocols
         const PACKAGE_NOT_COMPLETE = -2;
 
         /**
-         * input get revBuffer's length
+         * input get buffer's length
          * 
-         * @param mixed $revBuffer
+         * @param mixed $buffer
          * @static 
          * @return void
          */
-        public static function input($revBuffer);
+        public static function input($buffer);
 
         /**
          * decode resolve data 
          * 
-         * @param mixed $revBuffer
+         * @param mixed $buffer
          * @param $connection
          * @static 
          * @return void
          */
-        public static function decode($revBuffer, $connection);
+        public static function decode($buffer, $connection);
 
         /**
          * encode pack data to send
          * 
-         * @param mixed $content
+         * @param mixed $buffer
          * @param $connection
          * @static 
          * @return void
          */
-        public static function encode($content, $connection);
+        public static function encode($buffer, $connection);
     } 
 }
