@@ -52,7 +52,7 @@ namespace Worker\Ipc
             }
 
             // 修改队列的长度 msg_qbytes, macbook pro 修改无效默认1024byte
-            msg_set_queue($this->_msg, array('msg_qbytes' => 65535));
+            msg_set_queue($this->_msg, array('msg_qbytes' => 1024*1024*20));
             return true;
         }
 

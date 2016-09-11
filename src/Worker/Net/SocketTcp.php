@@ -225,6 +225,7 @@ namespace Worker\Net
                     SocketInterface::$statistics['send_fail']++;
                     // send data fail
                     if (!is_resource($this->_socket) || feof($this->_socket)) {
+                    echo "hhhhhhh\n";
                         if (isset($this->_serv->_methods['error']) && is_callable($this->_serv->_methods['error'])) {
                             try {
                                 call_user_func($this->_serv->_methods['error'], $this->_serv, $this, $this->_id, "client closed");
@@ -336,13 +337,6 @@ namespace Worker\Net
             }
 
             $this->_status = self::STATUS_CLOSED;
-            Server::$_globalEvent->del(EventInterface::EV_READ, $this->_socket);
-            Server::$_globalEvent->del(EventInterface::EV_WRITE, $this->_socket);
-            fclose($this->_socket);
-
-            if ($this->_serv && isset($this->_serv->connections[$this->_id])) {
-                unset($this->_serv->connections[$this->_id]);
-            }
 
             // -----------------------------  清理专属当前链接对象的监听 ----------------------------
             if ($this->eventTimers) {
@@ -366,6 +360,14 @@ namespace Worker\Net
                 }
             }
             // -----------------------------  清理专属当前链接对象的监听 ----------------------------
+            
+            Server::$_globalEvent->del(EventInterface::EV_READ, $this->_socket);
+            Server::$_globalEvent->del(EventInterface::EV_WRITE, $this->_socket);
+            fclose($this->_socket);
+
+            if ($this->_serv && isset($this->_serv->connections[$this->_id])) {
+                unset($this->_serv->connections[$this->_id]);
+            }
 
             if (isset($this->_serv->_methods['close']) && is_callable($this->_serv->_methods['close'])) {
                 try {

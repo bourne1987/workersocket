@@ -314,7 +314,7 @@ namespace Worker
             // 重新注册信号用libevent来处理
             self::resetInstallSignal();
             Timer::init(self::$_globalEvent);
-            Timer::add(100, function($timer_id) {
+            Timer::add(10, function($timer_id) {
                 // 当前进程用于监听消息队列的数据，它也只做这个事情，所以就算做阻塞也没事，lievent不会做其他事情的
                 // 获取所有队列中所有类型的数据
                 $message = $this->messageQueue->receiveMsg(0, MSG_IPC_NOWAIT); // 如果没有就阻塞
@@ -1065,11 +1065,11 @@ namespace Worker
         /**
          * 可以在主进程和子进程中调用，消息发送给worker所在的messagequeue
          */
-        public function task($taskData)
+        public function task($taskData, $blocking = true)
         {
             // 生成TaskID
             $taskID = Util::currentTime().rand(10000, 99999);
-            return $this->messageQueue->sendMsg(1, array("id"=>$taskID, "data"=>$taskData), true);
+            return $this->messageQueue->sendMsg(1, array("id"=>$taskID, "data"=>$taskData), $blocking);
         }
 
         /**
@@ -1105,7 +1105,7 @@ namespace Worker
             $keys = array_keys($params);
             $realParamNames = array_intersect($arrs, $keys);
             // 检查哪些参数是可以设置的
-            if ($real) {
+            if ($realParamNames) {
                 foreach ($realParamNames as $paramName) {
                     $this->$paramName = $params[$paramName];
                 }

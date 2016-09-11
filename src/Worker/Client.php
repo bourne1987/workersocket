@@ -370,7 +370,7 @@ namespace Worker
                 return;
             }
 
-            $len = @fwrite($this->socket, $this->sendBuffer);
+            $len = fwrite($this->socket, $this->sendBuffer);
             if ($len === strlen($this->sendBuffer)) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
                 $this->sendBuffer = '';
@@ -466,7 +466,7 @@ namespace Worker
          */
         public function close()
         {
-            if (GlobalEvent::getEvent() && is_resource($this->socket)) {
+            if (GlobalEvent::getEvent()) {
                 GlobalEvent::getEvent()->del(EventInterface::EV_READ, $this->socket);
                 GlobalEvent::getEvent()->del(EventInterface::EV_WRITE, $this->socket);
             }
