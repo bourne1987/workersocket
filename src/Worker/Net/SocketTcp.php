@@ -225,7 +225,6 @@ namespace Worker\Net
                     SocketInterface::$statistics['send_fail']++;
                     // send data fail
                     if (!is_resource($this->_socket) || feof($this->_socket)) {
-                    echo "hhhhhhh\n";
                         if (isset($this->_serv->_methods['error']) && is_callable($this->_serv->_methods['error'])) {
                             try {
                                 call_user_func($this->_serv->_methods['error'], $this->_serv, $this, $this->_id, "client closed");
@@ -419,7 +418,7 @@ namespace Worker\Net
         public function __destruct()
         {
             if ($this->socketTcp) {
-                echo "销毁:【".posix_getpid()."】; RecordID = ".$this->_id."\n";
+                Server::log("销毁:【".posix_getpid()."】; RecordID = ".$this->_id);
                 SocketInterface::$statistics['connection_count']--;
             }
         }
