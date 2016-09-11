@@ -1,31 +1,36 @@
 <?php
 include_once "../src/start.php";
-$serv = new WorkerServer('tcp://0.0.0.0:9501');
-$serv->count = 3;
+$serv = new WorkerServer('json://0.0.0.0:9501');
+$serv->count = 1;
 $serv->taskCount = 2;
 
 $serv->heartbeatCheckInterval = 1000;
-$serv->heartbeatIdleTime = 3000;
+$serv->heartbeatIdleTime = 5000;
 
 $serv->on("connect", function($serv, $connectSocket, $recordId) {
-    //$serv->tick(1000, function($timerId) use ($serv, $connectSocket) {
-        //$serv->send($connectSocket, "hhhhhhhh---".time());
-        ////$connectSocket->send("hhhhh---".time()."--- aaa");
-    //}); 
+    echo "进程[".posix_getpid()."]链接上了[$recordId]\n";
 });
 
 $serv->on('close', function($serv, $connectSocket, $recordId) {
-    echo posix_getpid()."---$recordId 执行关闭函数.\n";
+    echo "进程[".posix_getpid()."]关闭recordid[$recordId]\n";
 });
 
-$serv->on('receive', function($server, $connectSocket, $recordID, $data) {
-    echo "接收到数据：".serialize($data)."\n";
-    $timerId = $server->tick(1000, function($timerId) use ($server, $connectSocket) {
-        $server->send($connectSocket, "welcome to Bourne's place.<br/>");
-    }); 
+$serv->on('error', function($serv, $connectSocket, $recordId, $errMsg) {
+    echo "进程[".posix_getpid()."] recordid= {$recordId}  错误信息: $errMsg\n";
+});
 
-    // **888 
-    //$connectSocket->eventTimers[] = $timerId;
+$serv->on('sendBufferFull', function($serv, $connectSocket, $recordId, $msg) {
+    echo "$msg\n";
+});
+
+$serv->on('receive', function($serv, $connectSocket, $recordID, $data) {
+    echo "接收到数据：".serialize($data)." --- {$recordID}\n";
+    $serv->task($data);
+    $serv->send($connectSocket, $data);
+});
+
+$serv->on('task', function($serv, $taskID, $taskData) {
+    echo "异步任务---- {$taskData}\n";
 });
 
 WorkerServer::start();
